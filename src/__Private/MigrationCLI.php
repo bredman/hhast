@@ -15,6 +15,7 @@ use namespace Facebook\HHAST;
 use namespace HH\Lib\{C, Str, Vec};
 use type Facebook\HHAST\Migrations\{
   AddFixMesMigration,
+  ArrayRefInForeachMigration,
   BaseMigration,
   CallTimePassByReferenceMigration,
   IMigrationWithFileList,
@@ -49,6 +50,12 @@ class MigrationCLI extends CLIWithRequiredArguments {
         'Allow implicit structural subtyping of all shapes',
         '--implicit-shape-subtypes',
       ),
+      CLIOptions\flag(
+        () ==> { $this->migrations[] = ArrayRefInForeachMigration::class; },
+        'Migrate foreach loops using array references',
+        '--foreach-array-references',
+      ),
+
       CLIOptions\flag(
         () ==> { $this->migrations[] = OptionalShapeFieldsMigration::class; },
         'Migrate nullable shape fields to be both nullable and optional',
