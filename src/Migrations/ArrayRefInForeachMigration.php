@@ -30,18 +30,18 @@ final class ArrayRefInForeachMigration extends StepBasedMigration {
     $foreach_value = $foreach->getValue();
     $foreach_body = $foreach->getBody();
 
-
     # Skip over stuff like `foreach ($foo as $key => $value)`
     if ($foreach->hasKey()){
       return $foreach;
     }
 
-    # Filter to ensure the expression is like `foreach ($foo as &$bar)`
+    # Filter to ensure the expression is like:
+    # `foreach ($foo as &$bar)` or `foreach ($foo['b'] as &$bar)`
     if (!$foreach_value instanceof HHAST\PrefixUnaryExpression || !$foreach_value->getOperator() instanceof HHAST\AmpersandToken){
       return $foreach;
     }
 
-    if (!$foreach_collection instanceof HHAST\VariableExpression){
+    if (!$foreach_collection instanceof HHAST\VariableExpression && !$foreach_collection instanceof HHAST\SubscriptExpression){
       return $foreach;
     }
 
@@ -60,6 +60,12 @@ final class ArrayRefInForeachMigration extends StepBasedMigration {
     # - $bar may have been used after the foreach statement and we're changing its value
     # - $foo_key may have been used after the foreach statement and we're changing its value
 
+    $foreach_collection_ft = $foreach_collection->getFirstTokenx();
+    $foreach_collection_lt = $foreach_collection->getLastTokenx();
+
+    $trimmed_collection = $foreach_collection;
+    $trimmed_collection = $trimmed_collection->replace($foreach_collection_ft, $foreach_collection_ft->withLeading(HHAST\Missing()));
+    $trimmed_collection = $trimmed_collection->replace($foreach_collection_lt, $foreach_collection_lt->withTrailing(HHAST\Missing()));
 
     # First reformant code in the foreach statement itself
     $array_key_variable = self::makeNewOperand($original_operand);
@@ -81,7 +87,7 @@ final class ArrayRefInForeachMigration extends StepBasedMigration {
     foreach ($array_variable_references as $reference){
       assert($reference instanceof HHAST\VariableExpression);
 
-      $replacement = self::makeArraySubscriptExpression($reference, $foreach_collection, $array_key_variable);
+      $replacement = self::makeArraySubscriptExpression($reference, $trimmed_collection, $array_key_variable);
       $foreach = $foreach->replace($reference, $replacement);
     }
 
@@ -118,17 +124,29 @@ final class ArrayRefInForeachMigration extends StepBasedMigration {
     );
   }
 
-  private static function makeArraySubscriptExpression(HHAST\VariableExpression $original, HHAST\VariableExpression $array, HHAST\VariableExpression $array_key): HHAST\SubscriptExpression {
-    $original_token = $original->getFirstTokenx();
-    $array_token = $array->getFirstTokenx();
+  #
+  # Take a SubscriptExpression or VariableExpression that repesents a reference to the collection
+  # in the foreach and generate a replacement for it. So `$value` becomes `$values[$value_key]`
+  # or `$value` becomes `$ret['values'][$value_key]`
+  #
+  # $original - `$value`
+  # $collection - the collection being iterated over by reference eg. `$ret['values']` or `$values`
+  # $collectin_key - the key variable used to index into the collection eg. `$value_key`
+  #
+  private static function makeArraySubscriptExpression(HHAST\VariableExpression $original, HHAST\EditableNode $collection, HHAST\VariableExpression $array_key): HHAST\SubscriptExpression {
+    $original_last_token = $original->getFirstTokenx();
+    $original_first_token = $original->getLastTokenx();
 
-    $replacement_array_token = new HHAST\VariableToken($original_token->getLeading(), HHAST\Missing(), $array_token->getText());
+    $leading_collection_token = $collection->getFirstTokenx();
+    $whitespaced_collection_token = $leading_collection_token->withLeading($original_first_token->getLeading());
+
+    $padded_collection = $collection->replace($leading_collection_token, $whitespaced_collection_token);
 
     return new HHAST\SubscriptExpression(
-      new HHAST\VariableExpression($replacement_array_token),
+      $padded_collection,
       new HHAST\LeftBracketToken(HHAST\Missing(), HHAST\Missing()),
       $array_key,
-      new HHAST\RightBracketToken(HHAST\Missing(), $original_token->getTrailing()),
+      new HHAST\RightBracketToken(HHAST\Missing(), $original_last_token->getTrailing()),
     );
   }
 
